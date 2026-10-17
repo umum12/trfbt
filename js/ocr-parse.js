@@ -89,9 +89,41 @@
   }
 
   function findRef(L) {
-    var v = valueAfter(L, 'NO\\.? ?REF(?:ERENSI)?|NOMOR REFERENSI|KODE REFERENSI|ID TRANSAKSI|NO\\.? ?TRANSAKSI|NOMOR TRANSAKSI|REFERENCE|REF');
-    var m = /[A-Z0-9]{6,}/i.exec(v.replace(/[\s-]/g, ''));
-    return m ? m[0].toUpperCase() : '';
+    var re = /^(?:NO\.? ?REF(?:ERENS[I1!L])?|NOMOR REF(?:ERENS[I1!L])?|KODE REF(?:ERENS[I1!L])?|ID TRANSAKSI|NO\.? ?TRANSAKSI|NOMOR TRANSAKSI|REFERENCE|REF)\s*[:\-]?\s*(.*)$/i;
+    for (var i = 0; i < L.length; i++) {
+      var m = re.exec(L[i]);
+      if (!m) continue;
+      var v = m[1].trim();
+      if (!v && L[i + 1] && !LABELISH.test(L[i + 1])) { v = L[i + 1]; i++; }
+      // nilai panjang sering pecah ke baris berikutnya (satu kata alfanumerik tanpa label)
+      var nx = L[i + 1];
+      if (v && nx && /^[A-Z0-9]{6,}$/i.test(nx) && /\d/.test(nx) && !LABELISH.test(nx)) v += nx;
+      var t = /[A-Z0-9]{6,}/i.exec(v.replace(/[\s-]/g, ''));
+      if (t) return t[0].toUpperCase();
+    }
+    return '';
+  }
+
+  /* Token PLN 20 digit: boleh pakai spasi/strip, boleh terpotong ke baris berikutnya (mis. "...320" lalu "8") */
+  function findToken(L) {
+    var i, m;
+    for (i = 0; i < L.length; i++) {
+      m = /\d{4}(?:[ -]\d{4}){4}/.exec(fixDigits(L[i]));
+      if (m) return digitsOf(m[0]);
+    }
+    for (i = 0; i < L.length; i++) {
+      var fx = fixDigits(L[i]);
+      if (!/^[\d\s-]{14,}$/.test(fx)) continue;
+      var d = digitsOf(fx);
+      if (d.length === 20) return d;
+      for (var k = 1; k <= 2 && d.length < 20 && L[i + k]; k++) {
+        var nx = fixDigits(L[i + k]);
+        if (!/^[\d\s-]{1,6}$/.test(nx)) break;
+        d += digitsOf(nx);
+      }
+      if (d.length === 20) return d;
+    }
+    return '';
   }
 
   function parseTrf(text) {
@@ -139,14 +171,8 @@
   }
 
   function parsePln(text) {
-    var L = lines(text), out = {}, i, m;
-    var token = '';
-    for (i = 0; i < L.length && !token; i++) {
-      m = /\d{4}(?:[ -]\d{4}){4}/.exec(fixDigits(L[i]));
-      if (m) token = digitsOf(m[0]);
-    }
-    if (!token) for (i = 0; i < L.length && !token; i++) { var dg = digitsOf(fixDigits(L[i])); if (dg.length === 20) token = dg; }
-    out.token = token;
+    var L = lines(text), out = {}, i;
+    out.token = findToken(L);
     var meter = digitsOf(fixDigits(valueAfter(L, 'NO\\.? ?METER|NOMOR METER|NO\\.? ?MTR|METER')));
     out.no_meter = /^\d{9,13}$/.test(meter) ? meter : '';
     var idp = digitsOf(fixDigits(valueAfter(L, 'ID ?PEL(?:ANGGAN)?|IDPEL|NO\\.? ?PELANGGAN|NOMOR PELANGGAN')));
@@ -157,7 +183,23 @@
     out.kwh = kwh ? kwh[0].replace(',', '.') : '';
     out.ref = findRef(L);
     out.date = parseDate(text);
-    out.amount = pickAmount(L, ['NOMINAL', 'RP STROOM|RP TOKEN|RP STR', 'HARGA', 'RP BAYAR|TOTAL BAYAR|TOTAL', 'JUMLAH']);
+
+    // NOMINAL = angka di baris produk ("Token Listrik Prabayar 50000"), atau label NOMINAL
+    var nominal = 0;
+    for (i = 0; i < L.length && !nominal; i++) {
+      if (/TOKEN|PRABAYAR|PLN PREPAID/i.test(L[i]) && !/^(?:TOKEN LISTRIK|STROOM)\s*\/?\s*(?:TOKEN)?$/i.test(L[i]) && !/\d{4}[ -]\d{4}/.test(L[i]) && !/GAGAL|JIKA|ISI TOKEN/i.test(L[i])) {
+        var pm = /(\d{1,3}(?:[.,]\d{3})+|\d{4,7})\s*$/.exec(L[i]);
+        if (pm) nominal = toRp(pm[1]);
+      }
+    }
+    if (!nominal) nominal = pickAmount(L, ['NOMINAL', 'RP STROOM|RP TOKEN|RP STR']);
+    var total = pickAmount(L, ['TOTAL BAYAR|TOTAL PEMBAYARAN|TOTAL', 'HARGA', 'RP BAYAR', 'JUMLAH']);
+    if (nominal && total > nominal && total - nominal <= nominal) {
+      out.amount = nominal;
+      out.admin = total - nominal;      // admin = TOTAL - NOMINAL
+    } else {
+      out.amount = nominal || total;
+    }
     return out;
   }
 
@@ -189,8 +231,7 @@
 
   function detect(text) {
     var U = text.toUpperCase(), L = lines(text);
-    var hasToken = false;
-    L.forEach(function (l) { if (/\d{4}(?:[ -]\d{4}){4}/.test(fixDigits(l))) hasToken = true; });
+    var hasToken = !!findToken(L);
     var s = { pln: 0, trf: 0, tagihan: 0 };
     if (hasToken) s.pln += 3;
     if (/TOKEN|STROOM|KWH|PRABAYAR/.test(U)) s.pln += 2;

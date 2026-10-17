@@ -417,7 +417,7 @@
     d.date = String(pick('date') || d.date);
     d.amount = digits(pick('amount', 'amt', 'nominal'));
     d.catatan = String(pick('catatan'));
-    d.admin = Store.calcAdmin(S, d.amount);
+    d.admin = digits(pick('admin')) || Store.calcAdmin(S, d.amount);
     if (!Store.upsert(d)) toast('Gagal menyimpan: penyimpanan perangkat penuh');
     go('#/edit/' + d.id);
     toast('Periksa hasil scan, ketuk ikon pensil untuk memperbaiki');
