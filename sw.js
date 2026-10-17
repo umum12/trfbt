@@ -1,5 +1,5 @@
 /* Service worker: cache-first untuk aset statis. Naikkan VERSION setiap rilis. */
-const VERSION = 'v1.2.0';
+const VERSION = 'v1.2.1';
 const CACHE = 'trfbt-' + VERSION;
 const ASSETS = [
   './', './index.html', './manifest.webmanifest',
